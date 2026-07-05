@@ -1,4 +1,4 @@
-from src.chat_service import ChatService
+from src.chat_service import ChatService, ChatServiceError
 
 
 def main() -> None:
@@ -21,8 +21,12 @@ def main() -> None:
 
         try:
             answer = chat_service.generate_reply(messages)
+        except ChatServiceError as exc:
+            print(f"Bot: {exc}")
+            messages.pop()
+            continue
         except Exception as exc:
-            print(f"Bot: Có lỗi khi gọi Groq API: {exc}")
+            print(f"Bot: Lỗi không mong đợi khi gọi Groq API: {exc}")
             messages.pop()
             continue
 

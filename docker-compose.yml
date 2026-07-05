@@ -1,0 +1,16 @@
+services:
+  groq-assistant:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Database (lịch sử chat, tài khoản, kho tri thức) sống ngoài container.
+      - ./data:/app/data
+      # Cache model embedding (~470MB) — tải một lần, giữ qua các lần rebuild.
+      - fastembed-cache:/app/model-cache
+    restart: unless-stopped
+
+volumes:
+  fastembed-cache:

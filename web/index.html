@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Groq Assistant</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Màn hình đăng nhập -->
+  <div id="auth-view" class="auth-wrap hidden">
+    <div class="auth-card">
+      <h1>Groq Assistant</h1>
+      <p class="auth-sub">Trợ lý AI Agent — đăng nhập để bắt đầu</p>
+      <div id="auth-error" class="auth-error hidden"></div>
+      <form id="auth-form">
+        <label for="username">Tên đăng nhập</label>
+        <input id="username" type="text" autocomplete="username" required minlength="3" maxlength="32">
+        <label for="password">Mật khẩu</label>
+        <input id="password" type="password" autocomplete="current-password" required minlength="8">
+        <button type="submit" id="auth-submit">Đăng nhập</button>
+      </form>
+      <p class="auth-toggle">
+        <span id="auth-toggle-text">Chưa có tài khoản?</span>
+        <a href="#" id="auth-toggle-link">Đăng ký</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- Màn hình chính -->
+  <div id="main-view" class="layout hidden">
+    <aside class="sidebar">
+      <div class="brand">Groq Assistant</div>
+
+      <button id="new-chat" class="btn primary">+ Chat mới</button>
+
+      <div class="section-title">Lịch sử chat</div>
+      <nav id="conversation-list" class="conversation-list"></nav>
+
+      <details class="panel">
+        <summary>Tài liệu (RAG)</summary>
+        <div class="panel-body">
+          <input id="file-input" type="file" multiple accept=".txt,.md,.pdf">
+          <button id="upload-docs" class="btn">Nạp tài liệu</button>
+          <div id="doc-list" class="mini-list"></div>
+          <button id="clear-docs" class="btn danger hidden">Xóa toàn bộ tài liệu</button>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary>Trí nhớ dài hạn</summary>
+        <div class="panel-body">
+          <div id="memory-list" class="mini-list"></div>
+          <button id="clear-memories" class="btn danger hidden">Xóa toàn bộ trí nhớ</button>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary>Cài đặt</summary>
+        <div class="panel-body">
+          <label class="check-row">
+            <input id="agent-mode" type="checkbox" checked>
+            <span>Chế độ Agent (dùng công cụ)</span>
+          </label>
+          <label class="check-row">
+            <input id="use-documents" type="checkbox" checked>
+            <span>Cho phép tra tài liệu</span>
+          </label>
+          <label class="check-row">
+            <input id="use-memory" type="checkbox" checked>
+            <span>Trí nhớ dài hạn</span>
+          </label>
+        </div>
+      </details>
+
+      <div class="sidebar-footer">
+        <div id="usage-line" class="usage-line"></div>
+        <div class="user-row">
+          <span id="current-username"></span>
+          <a href="#" id="logout">Đăng xuất</a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="chat-area">
+      <header class="chat-header">
+        <div id="chat-title">Trợ lý AI</div>
+        <div id="model-line" class="model-line"></div>
+      </header>
+
+      <div id="messages" class="messages">
+        <div id="empty-state" class="empty-state">
+          Bắt đầu bằng một câu hỏi bên dưới. Ở chế độ Agent, AI có thể tự tính toán,
+          tìm kiếm web, tra cứu tài liệu bạn đã nạp và ghi nhớ thông tin quan trọng.
+        </div>
+      </div>
+
+      <div class="composer">
+        <textarea id="chat-input" rows="1" placeholder="Nhập câu hỏi của bạn..."></textarea>
+        <button id="send-btn" class="btn primary">Gửi</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

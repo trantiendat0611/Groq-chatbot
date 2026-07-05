@@ -1,0 +1,16 @@
+.venv/
+.git/
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest-tmp/
+data/
+tests/
+.env
+*.md
+run-ui.cmd
+run-api.cmd
+app.py
+docker-compose.yml
+Dockerfile

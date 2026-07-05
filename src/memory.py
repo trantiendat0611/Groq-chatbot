@@ -16,12 +16,21 @@ class Conversation:
     updated_at: str
 
 
-def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def _connect(db_path: Path | None = None) -> sqlite3.Connection:
+    # Đọc DB_PATH lúc gọi (không phải lúc định nghĩa) để test thay được đường dẫn.
+    db_path = db_path or DB_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Migration nhẹ: thêm cột nếu database cũ chưa có."""
+    columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
 def init_database() -> None:
@@ -31,6 +40,7 @@ def init_database() -> None:
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
+                user_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -56,25 +66,35 @@ def init_database() -> None:
             ON messages (conversation_id, id)
             """
         )
+        # Database tạo từ phiên bản cũ chưa có cột user_id.
+        _ensure_column(connection, "conversations", "user_id", "user_id INTEGER")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_conversations_user_id
+            ON conversations (user_id, updated_at)
+            """
+        )
 
 
-def create_chat(title: str = "Chat mới") -> int:
+def create_chat(title: str = "Chat mới", user_id: int | None = None) -> int:
     with _connect() as connection:
         cursor = connection.execute(
-            "INSERT INTO conversations (title) VALUES (?)",
-            (title,),
+            "INSERT INTO conversations (title, user_id) VALUES (?, ?)",
+            (title, user_id),
         )
         return int(cursor.lastrowid)
 
 
-def list_chats() -> list[Conversation]:
+def list_chats(user_id: int | None = None) -> list[Conversation]:
     with _connect() as connection:
         rows = connection.execute(
             """
             SELECT id, title, created_at, updated_at
             FROM conversations
+            WHERE user_id IS ?
             ORDER BY updated_at DESC, id DESC
-            """
+            """,
+            (user_id,),
         ).fetchall()
 
     return [
@@ -88,28 +108,28 @@ def list_chats() -> list[Conversation]:
     ]
 
 
-def ensure_chat_exists() -> int:
+def ensure_chat_exists(user_id: int | None = None) -> int:
     init_database()
-    chats = list_chats()
+    chats = list_chats(user_id)
     if chats:
         return chats[0].id
-    return create_chat()
+    return create_chat(user_id=user_id)
 
 
-def chat_exists(conversation_id: int) -> bool:
+def chat_exists(conversation_id: int, user_id: int | None = None) -> bool:
     with _connect() as connection:
         row = connection.execute(
-            "SELECT 1 FROM conversations WHERE id = ?",
-            (conversation_id,),
+            "SELECT 1 FROM conversations WHERE id = ? AND user_id IS ?",
+            (conversation_id, user_id),
         ).fetchone()
     return row is not None
 
 
-def get_chat_title(conversation_id: int) -> str:
+def get_chat_title(conversation_id: int, user_id: int | None = None) -> str:
     with _connect() as connection:
         row = connection.execute(
-            "SELECT title FROM conversations WHERE id = ?",
-            (conversation_id,),
+            "SELECT title FROM conversations WHERE id = ? AND user_id IS ?",
+            (conversation_id, user_id),
         ).fetchone()
 
     if row is None:
@@ -118,6 +138,8 @@ def get_chat_title(conversation_id: int) -> str:
 
 
 def get_chat_messages(conversation_id: int) -> list[dict[str, str]]:
+    """Lấy message theo conversation. Quyền sở hữu phải được kiểm tra trước
+    bằng chat_exists(conversation_id, user_id)."""
     with _connect() as connection:
         rows = connection.execute(
             """
@@ -125,8 +147,7 @@ def get_chat_messages(conversation_id: int) -> list[dict[str, str]]:
             FROM messages
             WHERE conversation_id = ?
             ORDER BY id ASC
-            """
-            ,
+            """,
             (conversation_id,),
         ).fetchall()
 
@@ -162,21 +183,21 @@ def add_chat_message(conversation_id: int, role: str, content: str) -> int:
         return int(cursor.lastrowid)
 
 
-def rename_chat(conversation_id: int, title: str) -> None:
+def rename_chat(conversation_id: int, title: str, user_id: int | None = None) -> None:
     with _connect() as connection:
         connection.execute(
             """
             UPDATE conversations
             SET title = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = ? AND user_id IS ?
             """,
-            (title, conversation_id),
+            (title, conversation_id, user_id),
         )
 
 
-def delete_chat(conversation_id: int) -> None:
+def delete_chat(conversation_id: int, user_id: int | None = None) -> None:
     with _connect() as connection:
         connection.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,),
+            "DELETE FROM conversations WHERE id = ? AND user_id IS ?",
+            (conversation_id, user_id),
         )

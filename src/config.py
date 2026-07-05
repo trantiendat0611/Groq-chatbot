@@ -11,6 +11,10 @@ ENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 800
+DEFAULT_CONTEXT_TOKENS = 6000
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_AGENT_MAX_STEPS = 5
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,10 @@ class AppConfig:
     model: str = DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
+    context_tokens: int = DEFAULT_CONTEXT_TOKENS
+    max_retries: int = DEFAULT_MAX_RETRIES
+    agent_max_steps: int = DEFAULT_AGENT_MAX_STEPS
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
 
 
 def _get_float(name: str, default: float) -> float:
@@ -57,4 +65,9 @@ def load_config() -> AppConfig:
         model=os.getenv("GROQ_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL,
         temperature=_get_float("GROQ_TEMPERATURE", DEFAULT_TEMPERATURE),
         max_tokens=_get_int("GROQ_MAX_TOKENS", DEFAULT_MAX_TOKENS),
+        context_tokens=_get_int("GROQ_CONTEXT_TOKENS", DEFAULT_CONTEXT_TOKENS),
+        max_retries=_get_int("GROQ_MAX_RETRIES", DEFAULT_MAX_RETRIES),
+        agent_max_steps=_get_int("GROQ_AGENT_MAX_STEPS", DEFAULT_AGENT_MAX_STEPS),
+        embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).strip()
+        or DEFAULT_EMBEDDING_MODEL,
     )

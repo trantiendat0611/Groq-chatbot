@@ -5,3 +5,6 @@ uvicorn[standard]
 streamlit
 requests
 pypdf
+pytest
+fastembed
+ddgs
