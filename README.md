@@ -199,22 +199,29 @@ Các công cụ hiện có:
 | `search_documents` | Tra cứu tài liệu bạn đã nạp (RAG-as-a-tool) |
 | `remember` | Ghi một sự thật về bạn vào trí nhớ dài hạn |
 
-## Hỏi đáp với tài liệu riêng (RAG)
+## Hỏi đáp với tài liệu riêng (RAG theo từng đoạn chat)
 
-Trong sidebar, mở mục `Tài liệu RAG`:
+Tài liệu gắn riêng với TỪNG đoạn chat — giống cách đính kèm file trong
+Claude/ChatGPT: nạp file ở đoạn chat nào thì AI chỉ đọc được trong đoạn
+chat đó; mở đoạn chat khác sẽ không thấy.
+
+Trong sidebar, mở mục `Tài liệu của đoạn chat`:
 
 1. Upload file `.txt`, `.md` hoặc `.pdf`.
-2. Bấm `Nạp tài liệu` (lần đầu sẽ tải model embedding ~470MB, chỉ một lần).
+2. Bấm `Nạp vào đoạn chat này` (lần đầu sẽ tải model embedding, chỉ một lần).
 3. Bật `Dùng tài liệu khi trả lời`.
 4. Đặt câu hỏi trong ô chat như bình thường.
 
 RAG phiên bản hiện tại:
 
 - Hỗ trợ TXT, Markdown, PDF
+- **Phạm vi theo đoạn chat**: mỗi tài liệu thuộc về một cuộc hội thoại;
+  xóa đoạn chat thì tài liệu của nó cũng bị dọn theo
+- Upload khi chưa có đoạn chat sẽ tự tạo đoạn chat mới (giao diện web)
 - Tìm kiếm ngữ nghĩa bằng embedding đa ngôn ngữ (hiểu tiếng Việt), cosine similarity
 - Tự fallback về tìm kiếm từ khóa có IDF nếu embedding không khả dụng
 - Tài liệu lưu bền vững trong `data/knowledge.db` — không mất khi tắt app
-- Nạp lại cùng tên file sẽ thay thế bản cũ
+- Nạp lại cùng tên file trong cùng đoạn chat sẽ thay thế bản cũ
 - Chế độ Agent: AI tự tra tài liệu qua công cụ `search_documents` khi thấy cần
 - Chế độ thường: các đoạn liên quan được chèn thẳng vào prompt, có ghi nguồn
 

@@ -336,13 +336,16 @@ html, body {
 
 .composer {
   display: flex;
-  gap: 0.6rem;
+  flex-direction: column;
+  gap: 0.5rem;
   padding: 1rem 1.5rem 1.25rem;
   border-top: 1px solid var(--border);
   max-width: 980px;
   width: 100%;
   margin: 0 auto;
 }
+
+.composer-row { display: flex; gap: 0.6rem; align-items: flex-end; }
 
 .composer textarea {
   flex: 1;
@@ -358,6 +361,62 @@ html, body {
 }
 
 .composer textarea:focus { outline: none; border-color: var(--text-muted); }
+
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  flex-shrink: 0;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.icon-btn:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
+.icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.attachment-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text);
+  max-width: 260px;
+}
+.attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .meta { color: var(--text-dim); flex-shrink: 0; }
+.attach-chip .remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.attach-chip .remove:hover { color: var(--danger); }
+.attach-chip.loading { color: var(--text-muted); }
+.attach-chip .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted);
+  animation: pulse 1s infinite alternate;
+}
 
 @media (max-width: 760px) {
   .sidebar { display: none; }

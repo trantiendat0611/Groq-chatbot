@@ -15,7 +15,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -125,6 +125,10 @@ async def request_logging(request: Request, call_next):
         )
     response.headers["X-Request-Id"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
+    # File tĩnh (web/) đổi khi cập nhật frontend: buộc trình duyệt revalidate
+    # bằng ETag mỗi lần, tránh phục vụ HTML/CSS/JS cũ sau khi nâng cấp.
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -205,6 +209,7 @@ def resolve_settings(chat_service: ChatService, body: ChatRequest) -> Generation
 
 def build_user_tools(
     user_id: int,
+    conversation_id: int,
     include_documents: bool,
     include_memory: bool,
     top_k: int = 4,
@@ -215,10 +220,18 @@ def build_user_tools(
         make_web_search_tool(),
     ]
 
-    if include_documents and vector_store.count_chunks(user_id=user_id) > 0:
+    # Tài liệu gắn theo từng đoạn chat: agent chỉ thấy file đã nạp
+    # trong chính đoạn chat này.
+    if include_documents and vector_store.count_chunks(
+        user_id=user_id, conversation_id=conversation_id
+    ) > 0:
         def document_search(query: str, k: int) -> str:
             results, _method = vector_store.search(
-                query, top_k=k, embedder=get_default_embedder(), user_id=user_id
+                query,
+                top_k=k,
+                embedder=get_default_embedder(),
+                user_id=user_id,
+                conversation_id=conversation_id,
             )
             if not results:
                 return "Không tìm thấy đoạn nào liên quan trong tài liệu đã nạp."
@@ -340,6 +353,8 @@ def rename_conversation(
 def delete_conversation(conversation_id: int, user: auth.User = Depends(get_current_user)):
     _require_owned_conversation(conversation_id, user)
     memory.delete_chat(conversation_id, user_id=user.id)
+    # Tài liệu gắn với đoạn chat này cũng đi theo.
+    vector_store.clear_store(user_id=user.id, conversation_id=conversation_id)
     return {"ok": True}
 
 
@@ -387,6 +402,7 @@ def chat(
         system_prompt = f"{system_prompt}\n\n{AGENT_PROMPT_SUFFIX.strip()}"
         tools = build_user_tools(
             user.id,
+            conversation_id,
             include_documents=body.use_documents,
             include_memory=body.use_memory,
         )
@@ -487,19 +503,36 @@ def chat(
 
 
 @app.get("/api/documents")
-def get_documents(user: auth.User = Depends(get_current_user)):
+def get_documents(
+    conversation_id: int | None = None,
+    user: auth.User = Depends(get_current_user),
+):
+    """Tài liệu của MỘT đoạn chat. Chưa chọn đoạn chat thì chưa có tài liệu."""
+    if conversation_id is None:
+        return []
+    _require_owned_conversation(conversation_id, user)
     return [
         {"source": source, "chunks": chunk_count}
-        for source, chunk_count in vector_store.list_sources(user_id=user.id)
+        for source, chunk_count in vector_store.list_sources(
+            user_id=user.id, conversation_id=conversation_id
+        )
     ]
 
 
 @app.post("/api/documents", status_code=201)
 async def upload_documents(
     files: list[UploadFile] = File(...),
+    conversation_id: int | None = Form(default=None),
     user: auth.User = Depends(get_current_user),
 ):
     check_rate_limit(f"upload:{user.id}", RATE_LIMIT_UPLOAD_PER_MINUTE)
+
+    # Tài liệu luôn gắn với một đoạn chat. Upload khi chưa có đoạn chat
+    # -> tạo đoạn chat mới luôn (giống đính kèm file lúc mở chat mới).
+    if conversation_id is None:
+        conversation_id = memory.create_chat(user_id=user.id)
+    else:
+        _require_owned_conversation(conversation_id, user)
 
     payload: list[tuple[str, bytes]] = []
     for file in files:
@@ -529,12 +562,17 @@ async def upload_documents(
         embedder.embed_texts([chunk.text for chunk in chunks]) if embedder else None
     )
 
-    # Nạp lại cùng tên file thì thay thế bản cũ.
+    # Nạp lại cùng tên file trong cùng đoạn chat thì thay thế bản cũ.
     for filename, _data in payload:
-        vector_store.delete_source(filename, user_id=user.id)
-    vector_store.add_chunks(chunks, embeddings_list, user_id=user.id)
+        vector_store.delete_source(
+            filename, user_id=user.id, conversation_id=conversation_id
+        )
+    vector_store.add_chunks(
+        chunks, embeddings_list, user_id=user.id, conversation_id=conversation_id
+    )
 
     return {
+        "conversation_id": conversation_id,
         "files": len(payload),
         "chunks": len(chunks),
         "semantic": embedder is not None,
@@ -543,13 +581,17 @@ async def upload_documents(
 
 @app.delete("/api/documents")
 def delete_documents(
+    conversation_id: int,
     source: str | None = None,
     user: auth.User = Depends(get_current_user),
 ):
+    _require_owned_conversation(conversation_id, user)
     if source:
-        vector_store.delete_source(source, user_id=user.id)
+        vector_store.delete_source(
+            source, user_id=user.id, conversation_id=conversation_id
+        )
     else:
-        vector_store.clear_store(user_id=user.id)
+        vector_store.clear_store(user_id=user.id, conversation_id=conversation_id)
     return {"ok": True}
 
 

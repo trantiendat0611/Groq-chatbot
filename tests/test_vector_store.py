@@ -109,3 +109,51 @@ def test_load_all_chunks_roundtrip():
     loaded = vector_store.load_all_chunks()
 
     assert loaded == [original]
+
+
+# --- Cô lập tài liệu theo đoạn chat ---
+
+
+def test_chunks_isolated_between_conversations():
+    vector_store.add_chunks([make_chunk("tài liệu của chat một")], conversation_id=1)
+    vector_store.add_chunks([make_chunk("tài liệu của chat hai")], conversation_id=2)
+
+    assert vector_store.count_chunks(conversation_id=1) == 1
+    assert vector_store.count_chunks(conversation_id=2) == 1
+    # Không truyền conversation -> không thấy tài liệu của chat nào.
+    assert vector_store.count_chunks() == 0
+
+    results, method = vector_store.search("tài liệu", top_k=5, conversation_id=1)
+    assert method == "keyword"
+    assert all("chat một" in r.chunk.text for r in results)
+
+
+def test_semantic_search_scoped_to_conversation():
+    embedding = [[1.0, 0.0, 0.0]]
+    vector_store.add_chunks([make_chunk("nội dung A")], embedding, conversation_id=1)
+    vector_store.add_chunks([make_chunk("nội dung B")], embedding, conversation_id=2)
+
+    results = vector_store.semantic_search([1.0, 0.0, 0.0], top_k=5, conversation_id=1)
+
+    assert [r.chunk.text for r in results] == ["nội dung A"]
+
+
+def test_clear_store_scoped_to_conversation():
+    vector_store.add_chunks([make_chunk("của chat 1")], conversation_id=1)
+    vector_store.add_chunks([make_chunk("của chat 2")], conversation_id=2)
+
+    vector_store.clear_store(conversation_id=1)
+
+    assert vector_store.count_chunks(conversation_id=1) == 0
+    assert vector_store.count_chunks(conversation_id=2) == 1
+
+
+def test_delete_source_scoped_to_conversation():
+    # Cùng tên file ở hai đoạn chat khác nhau — xóa ở chat này không đụng chat kia.
+    vector_store.add_chunks([make_chunk("bản chat 1", source="tai_lieu.txt")], conversation_id=1)
+    vector_store.add_chunks([make_chunk("bản chat 2", source="tai_lieu.txt")], conversation_id=2)
+
+    vector_store.delete_source("tai_lieu.txt", conversation_id=1)
+
+    assert vector_store.list_sources(conversation_id=1) == []
+    assert vector_store.list_sources(conversation_id=2) == [("tai_lieu.txt", 1)]

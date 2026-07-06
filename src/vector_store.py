@@ -5,8 +5,12 @@ Giải quyết hai hạn chế của bản RAG cũ:
 - Tìm kiếm ngữ nghĩa bằng embedding (cosine similarity); nếu không có
   embedding thì fallback về tìm kiếm từ khóa có IDF như trước.
 
-Đa người dùng: user_id=None là chế độ local (Streamlit); backend API
-truyền user_id thật để cô lập kho tài liệu của từng người.
+Phạm vi tài liệu:
+- Mỗi tài liệu gắn với MỘT đoạn chat (conversation_id) — giống cách
+  Claude/ChatGPT đính kèm file theo từng cuộc hội thoại. Agent chỉ đọc
+  được tài liệu đã nạp trong chính đoạn chat đang mở.
+- user_id=None là chế độ local (Streamlit); backend API truyền user_id
+  thật để cô lập dữ liệu của từng người.
 """
 
 import sqlite3
@@ -47,16 +51,22 @@ def init_store() -> None:
                 text TEXT NOT NULL,
                 embedding BLOB,
                 user_id INTEGER,
+                conversation_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         _ensure_column(connection, "doc_chunks", "user_id", "user_id INTEGER")
+        _ensure_column(connection, "doc_chunks", "conversation_id", "conversation_id INTEGER")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_doc_chunks_source ON doc_chunks (source)"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_doc_chunks_user ON doc_chunks (user_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_doc_chunks_conversation "
+            "ON doc_chunks (conversation_id)"
         )
 
 
@@ -72,8 +82,9 @@ def add_chunks(
     chunks: list[DocumentChunk],
     embeddings: list[list[float]] | None = None,
     user_id: int | None = None,
+    conversation_id: int | None = None,
 ) -> int:
-    """Lưu chunks (kèm embedding nếu có). Trả về số chunk đã lưu."""
+    """Lưu chunks (kèm embedding nếu có) vào một đoạn chat. Trả về số chunk đã lưu."""
     if embeddings is not None and len(embeddings) != len(chunks):
         raise ValueError("Số embedding phải bằng số chunk.")
 
@@ -83,10 +94,19 @@ def add_chunks(
             blob = _embedding_to_blob(embeddings[index]) if embeddings else None
             connection.execute(
                 """
-                INSERT INTO doc_chunks (source, page, chunk_index, text, embedding, user_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO doc_chunks
+                    (source, page, chunk_index, text, embedding, user_id, conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (chunk.source, chunk.page, chunk.chunk_index, chunk.text, blob, user_id),
+                (
+                    chunk.source,
+                    chunk.page,
+                    chunk.chunk_index,
+                    chunk.text,
+                    blob,
+                    user_id,
+                    conversation_id,
+                ),
             )
     return len(chunks)
 
@@ -100,67 +120,94 @@ def _row_to_chunk(row: sqlite3.Row) -> DocumentChunk:
     )
 
 
-def load_all_chunks(user_id: int | None = None) -> list[DocumentChunk]:
+def load_all_chunks(
+    user_id: int | None = None,
+    conversation_id: int | None = None,
+) -> list[DocumentChunk]:
     init_store()
     with _connect() as connection:
         rows = connection.execute(
             """
             SELECT source, page, chunk_index, text
             FROM doc_chunks
-            WHERE user_id IS ?
+            WHERE user_id IS ? AND conversation_id IS ?
             ORDER BY id
             """,
-            (user_id,),
+            (user_id, conversation_id),
         ).fetchall()
     return [_row_to_chunk(row) for row in rows]
 
 
-def count_chunks(user_id: int | None = None) -> int:
+def count_chunks(
+    user_id: int | None = None,
+    conversation_id: int | None = None,
+) -> int:
     init_store()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT COUNT(*) AS total FROM doc_chunks WHERE user_id IS ?",
-            (user_id,),
+            """
+            SELECT COUNT(*) AS total FROM doc_chunks
+            WHERE user_id IS ? AND conversation_id IS ?
+            """,
+            (user_id, conversation_id),
         ).fetchone()
     return int(row["total"])
 
 
-def list_sources(user_id: int | None = None) -> list[tuple[str, int]]:
-    """Danh sách (tên file, số chunk) đã nạp."""
+def list_sources(
+    user_id: int | None = None,
+    conversation_id: int | None = None,
+) -> list[tuple[str, int]]:
+    """Danh sách (tên file, số chunk) đã nạp trong một đoạn chat."""
     init_store()
     with _connect() as connection:
         rows = connection.execute(
             """
             SELECT source, COUNT(*) AS total
             FROM doc_chunks
-            WHERE user_id IS ?
+            WHERE user_id IS ? AND conversation_id IS ?
             GROUP BY source
             ORDER BY source
             """,
-            (user_id,),
+            (user_id, conversation_id),
         ).fetchall()
     return [(row["source"], int(row["total"])) for row in rows]
 
 
-def delete_source(source: str, user_id: int | None = None) -> None:
+def delete_source(
+    source: str,
+    user_id: int | None = None,
+    conversation_id: int | None = None,
+) -> None:
     init_store()
     with _connect() as connection:
         connection.execute(
-            "DELETE FROM doc_chunks WHERE source = ? AND user_id IS ?",
-            (source, user_id),
+            """
+            DELETE FROM doc_chunks
+            WHERE source = ? AND user_id IS ? AND conversation_id IS ?
+            """,
+            (source, user_id, conversation_id),
         )
 
 
-def clear_store(user_id: int | None = None) -> None:
+def clear_store(
+    user_id: int | None = None,
+    conversation_id: int | None = None,
+) -> None:
+    """Xóa toàn bộ tài liệu của một đoạn chat."""
     init_store()
     with _connect() as connection:
-        connection.execute("DELETE FROM doc_chunks WHERE user_id IS ?", (user_id,))
+        connection.execute(
+            "DELETE FROM doc_chunks WHERE user_id IS ? AND conversation_id IS ?",
+            (user_id, conversation_id),
+        )
 
 
 def semantic_search(
     query_embedding: list[float],
     top_k: int = 4,
     user_id: int | None = None,
+    conversation_id: int | None = None,
 ) -> list[RetrievedChunk]:
     """Tìm chunks gần nhất theo cosine similarity trên embedding đã lưu."""
     init_store()
@@ -169,9 +216,9 @@ def semantic_search(
             """
             SELECT source, page, chunk_index, text, embedding
             FROM doc_chunks
-            WHERE embedding IS NOT NULL AND user_id IS ?
+            WHERE embedding IS NOT NULL AND user_id IS ? AND conversation_id IS ?
             """,
-            (user_id,),
+            (user_id, conversation_id),
         ).fetchall()
 
     if not rows:
@@ -200,22 +247,26 @@ def search(
     top_k: int = 4,
     embedder=None,
     user_id: int | None = None,
+    conversation_id: int | None = None,
 ) -> tuple[list[RetrievedChunk], str]:
-    """Tìm kiếm lai: ưu tiên ngữ nghĩa, fallback từ khóa.
+    """Tìm kiếm lai trong tài liệu của một đoạn chat: ưu tiên ngữ nghĩa, fallback từ khóa.
 
     Trả về (kết quả, phương thức) với phương thức là "semantic" | "keyword" | "none".
     """
     if embedder is not None:
         try:
             results = semantic_search(
-                embedder.embed_query(query), top_k=top_k, user_id=user_id
+                embedder.embed_query(query),
+                top_k=top_k,
+                user_id=user_id,
+                conversation_id=conversation_id,
             )
             if results:
                 return results, "semantic"
         except Exception:
             pass  # embedding lỗi thì âm thầm chuyển sang từ khóa
 
-    chunks = load_all_chunks(user_id=user_id)
+    chunks = load_all_chunks(user_id=user_id, conversation_id=conversation_id)
     results = retrieve_chunks(query, chunks, top_k=top_k)
     if results:
         return results, "keyword"

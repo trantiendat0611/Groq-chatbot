@@ -260,23 +260,106 @@ def test_chat_rate_limit(client):
 # --- Documents ---
 
 
-def test_upload_list_delete_documents(client):
+def upload_file(client, headers, conversation_id=None, filename="notes.txt", content=None):
+    content = content or "Groq siêu nhanh ".encode("utf-8") * 100
+    data = {}
+    if conversation_id is not None:
+        data["conversation_id"] = str(conversation_id)
+    return client.post(
+        "/api/documents",
+        files=[("files", (filename, content, "text/plain"))],
+        data=data,
+        headers=headers,
+    )
+
+
+def test_upload_list_delete_documents_in_conversation(client):
+    token = register(client)["token"]
+    headers = auth_header(token)
+    conversation_id = client.post("/api/conversations", headers=headers).json()["id"]
+
+    upload = upload_file(client, headers, conversation_id)
+    assert upload.status_code == 201, upload.text
+    assert upload.json()["chunks"] >= 1
+    assert upload.json()["conversation_id"] == conversation_id
+
+    listing = client.get(
+        f"/api/documents?conversation_id={conversation_id}", headers=headers
+    ).json()
+    assert listing[0]["source"] == "notes.txt"
+
+    client.delete(
+        f"/api/documents?conversation_id={conversation_id}&source=notes.txt",
+        headers=headers,
+    )
+    assert client.get(
+        f"/api/documents?conversation_id={conversation_id}", headers=headers
+    ).json() == []
+
+
+def test_upload_without_conversation_creates_one(client):
     token = register(client)["token"]
     headers = auth_header(token)
 
-    upload = client.post(
-        "/api/documents",
-        files=[("files", ("notes.txt", "Groq siêu nhanh ".encode("utf-8") * 100, "text/plain"))],
-        headers=headers,
-    )
+    upload = upload_file(client, headers)
     assert upload.status_code == 201, upload.text
-    assert upload.json()["chunks"] >= 1
+    conversation_id = upload.json()["conversation_id"]
+    assert conversation_id is not None
 
-    listing = client.get("/api/documents", headers=headers).json()
+    # Đoạn chat mới đã được tạo và chứa tài liệu.
+    conversations = client.get("/api/conversations", headers=headers).json()
+    assert [c["id"] for c in conversations] == [conversation_id]
+    listing = client.get(
+        f"/api/documents?conversation_id={conversation_id}", headers=headers
+    ).json()
     assert listing[0]["source"] == "notes.txt"
 
-    client.delete("/api/documents?source=notes.txt", headers=headers)
-    assert client.get("/api/documents", headers=headers).json() == []
+
+def test_documents_isolated_between_conversations(client):
+    token = register(client)["token"]
+    headers = auth_header(token)
+    conversation_a = client.post("/api/conversations", headers=headers).json()["id"]
+    conversation_b = client.post("/api/conversations", headers=headers).json()["id"]
+
+    upload_file(client, headers, conversation_a, filename="rieng_cua_a.txt")
+
+    docs_a = client.get(
+        f"/api/documents?conversation_id={conversation_a}", headers=headers
+    ).json()
+    docs_b = client.get(
+        f"/api/documents?conversation_id={conversation_b}", headers=headers
+    ).json()
+
+    assert [d["source"] for d in docs_a] == ["rieng_cua_a.txt"]
+    assert docs_b == []
+
+
+def test_delete_conversation_removes_its_documents(client):
+    token = register(client)["token"]
+    headers = auth_header(token)
+    conversation_id = client.post("/api/conversations", headers=headers).json()["id"]
+    upload_file(client, headers, conversation_id)
+
+    client.delete(f"/api/conversations/{conversation_id}", headers=headers)
+
+    user = auth.verify_user("dat_uit", "matkhau123")
+    assert vector_store.count_chunks(user_id=user.id, conversation_id=conversation_id) == 0
+
+
+def test_documents_of_foreign_conversation_return_404(client):
+    token_a = register(client, "user_a")["token"]
+    token_b = register(client, "user_b")["token"]
+    conversation_id = client.post(
+        "/api/conversations", headers=auth_header(token_a)
+    ).json()["id"]
+
+    assert client.get(
+        f"/api/documents?conversation_id={conversation_id}",
+        headers=auth_header(token_b),
+    ).status_code == 404
+    assert upload_file(
+        client, auth_header(token_b), conversation_id
+    ).status_code == 404
 
 
 def test_upload_rejects_unsupported_extension(client):

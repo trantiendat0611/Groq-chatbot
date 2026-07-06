@@ -199,12 +199,21 @@ def build_settings(
     )
 
 
-def run_document_search(query: str, top_k: int) -> str:
-    """Tra cứu kho tri thức, trả chuỗi ngữ cảnh cho model đọc."""
-    results, _method = vector_store.search(query, top_k=top_k, embedder=get_default_embedder())
-    if not results:
-        return "Không tìm thấy đoạn nào liên quan trong tài liệu đã nạp."
-    return format_rag_context(results)
+def make_document_searcher(conversation_id: int):
+    """Tạo hàm tra cứu tài liệu giới hạn trong MỘT đoạn chat."""
+
+    def run_document_search(query: str, top_k: int) -> str:
+        results, _method = vector_store.search(
+            query,
+            top_k=top_k,
+            embedder=get_default_embedder(),
+            conversation_id=conversation_id,
+        )
+        if not results:
+            return "Không tìm thấy đoạn nào liên quan trong tài liệu đã nạp."
+        return format_rag_context(results)
+
+    return run_document_search
 
 
 def save_user_fact(fact: str) -> bool:
@@ -215,6 +224,7 @@ def save_user_fact(fact: str) -> bool:
 
 
 def build_agent_tools(
+    conversation_id: int,
     include_documents: bool,
     include_memory: bool,
     top_k: int,
@@ -224,8 +234,13 @@ def build_agent_tools(
         make_time_tool(),
         make_web_search_tool(),
     ]
-    if include_documents and vector_store.count_chunks() > 0:
-        tools.append(make_document_search_tool(run_document_search, top_k=top_k))
+    # Tài liệu gắn theo đoạn chat: agent chỉ thấy file nạp trong chat này.
+    if include_documents and vector_store.count_chunks(conversation_id=conversation_id) > 0:
+        tools.append(
+            make_document_search_tool(
+                make_document_searcher(conversation_id), top_k=top_k
+            )
+        )
     if include_memory:
         tools.append(make_remember_tool(save_user_fact))
     return tools
@@ -361,7 +376,11 @@ with st.sidebar:
         fallback_model=default_settings.model,
     )
 
-    with st.expander("Tài liệu RAG", expanded=False):
+    with st.expander("Tài liệu của đoạn chat", expanded=False):
+        st.caption(
+            "Tài liệu gắn riêng với từng đoạn chat — AI chỉ đọc được file "
+            "đã nạp trong đoạn chat đang mở."
+        )
         rag_enabled = st.checkbox(
             "Dùng tài liệu khi trả lời",
             value=True,
@@ -404,10 +423,16 @@ with st.sidebar:
                                 else None
                             )
 
-                        # Nạp lại cùng file thì thay thế bản cũ, không nhân đôi.
+                        # Nạp lại cùng file trong cùng đoạn chat thì thay thế bản cũ.
                         for file_name, _ in files:
-                            vector_store.delete_source(file_name)
-                        vector_store.add_chunks(chunks, embeddings_list)
+                            vector_store.delete_source(
+                                file_name, conversation_id=active_conversation_id
+                            )
+                        vector_store.add_chunks(
+                            chunks,
+                            embeddings_list,
+                            conversation_id=active_conversation_id,
+                        )
 
                         if embedder is None:
                             st.info(
@@ -416,23 +441,27 @@ with st.sidebar:
                             )
                         st.success(
                             f"Đã nạp {len(chunks)} đoạn từ {len(files)} file "
-                            "(lưu bền vững, không mất khi tắt app)."
+                            "vào đoạn chat này."
                         )
                 except Exception as exc:
                     st.error(f"Không nạp được tài liệu: {exc}")
 
-        indexed_sources = vector_store.list_sources()
+        indexed_sources = vector_store.list_sources(
+            conversation_id=active_conversation_id
+        )
         if indexed_sources:
-            total_chunks = vector_store.count_chunks()
+            total_chunks = vector_store.count_chunks(
+                conversation_id=active_conversation_id
+            )
             st.caption(
-                f"Kho tri thức: {total_chunks} đoạn từ {len(indexed_sources)} file."
+                f"Đoạn chat này có {total_chunks} đoạn từ {len(indexed_sources)} file."
             )
             with st.popover("File đã nạp"):
                 for source_name, chunk_count in indexed_sources:
                     st.write(f"{source_name} ({chunk_count} đoạn)")
 
-            if st.button("Xóa toàn bộ tài liệu", key="clear_rag_documents"):
-                vector_store.clear_store()
+            if st.button("Xóa tài liệu của đoạn chat", key="clear_rag_documents"):
+                vector_store.clear_store(conversation_id=active_conversation_id)
                 st.rerun()
 
     with st.expander("Trí nhớ dài hạn", expanded=False):
@@ -482,6 +511,8 @@ with st.sidebar:
         st.divider()
         if st.button("Xóa chat hiện tại", key="delete_current_chat"):
             delete_chat(active_conversation_id)
+            # Tài liệu gắn với đoạn chat này cũng đi theo.
+            vector_store.clear_store(conversation_id=active_conversation_id)
             set_active_chat(ensure_chat_exists())
             st.rerun()
 
@@ -551,6 +582,7 @@ if prompt:
                 f"{system_prompt_for_request}\n\n{AGENT_PROMPT_SUFFIX.strip()}"
             )
             agent_tools = build_agent_tools(
+                active_conversation_id,
                 include_documents=rag_enabled,
                 include_memory=memory_enabled,
                 top_k=int(rag_top_k),
@@ -568,11 +600,14 @@ if prompt:
             rag_sources = []
             search_method = None
 
-            if rag_enabled and vector_store.count_chunks() > 0:
+            if rag_enabled and vector_store.count_chunks(
+                conversation_id=active_conversation_id
+            ) > 0:
                 retrieved, search_method = vector_store.search(
                     prompt,
                     top_k=int(rag_top_k),
                     embedder=get_default_embedder(),
+                    conversation_id=active_conversation_id,
                 )
                 if retrieved:
                     rag_context = format_rag_context(retrieved)
