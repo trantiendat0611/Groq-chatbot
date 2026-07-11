@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src import db
 from src.config import PROJECT_ROOT
 
 
@@ -41,12 +42,7 @@ class User:
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
-    db_path = db_path or DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    return db.connect(db_path or DB_PATH, foreign_keys=True)
 
 
 def init_auth_tables() -> None:

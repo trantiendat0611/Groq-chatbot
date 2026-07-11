@@ -8,6 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from src import db
 from src.config import PROJECT_ROOT
 
 
@@ -26,11 +27,7 @@ class UsageSummary:
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
-    db_path = db_path or DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return db.connect(db_path or DB_PATH)
 
 
 def init_usage_table() -> None:

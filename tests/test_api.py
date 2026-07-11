@@ -1,12 +1,20 @@
 """Test tích hợp backend API: auth, hội thoại, chat SSE, tài liệu, trí nhớ."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 import api as api_module
-from fakes import make_config, make_fake_client, text_chunk, tool_call_chunk, usage_chunk
+from fakes import (
+    FakeCompletions,
+    make_config,
+    make_fake_client,
+    text_chunk,
+    tool_call_chunk,
+    usage_chunk,
+)
 from src import auth, memory, usage, user_memory, vector_store
 from src.chat_service import ChatService
 
@@ -178,8 +186,11 @@ def test_chat_streams_text_and_persists(client):
     assert response.status_code == 200
     events = parse_sse(response.text)
     types = [event_type for event_type, _ in events]
+    # "start" phải đến trước mọi thứ để client biết conversation_id ngay lập tức.
+    assert types[0] == "start"
     assert "text" in types
     assert types[-1] == "done"
+    assert events[0][1]["conversation_id"] == events[-1][1]["conversation_id"]
 
     done = events[-1][1]
     conversation_id = done["conversation_id"]
@@ -224,6 +235,118 @@ def test_chat_with_tool_call_emits_tool_events(client):
 
     tool_result = next(data for event_type, data in events if event_type == "tool_result")
     assert tool_result["content"] == "42"
+
+
+def test_question_saved_before_model_runs(client):
+    """Câu hỏi phải nằm trong DB ngay từ đầu, trước khi model trả lời."""
+    seen: dict[str, list] = {}
+
+    def spy_stream(**kwargs):
+        # Lúc model bắt đầu chạy, câu hỏi đã phải được lưu.
+        seen["messages"] = memory.get_chat_messages(seen["conversation_id"])
+        return iter([text_chunk("ok")])
+
+    token = register(client)["token"]
+    headers = auth_header(token)
+    conversation_id = client.post("/api/conversations", headers=headers).json()["id"]
+    seen["conversation_id"] = conversation_id
+
+    service = ChatService(client=make_fake_client([]), config=make_config())
+    service._sleep = lambda seconds: None
+    service._create_completion = lambda kwargs: spy_stream(**kwargs)
+    api_module.app.state.chat_service = service
+
+    client.post(
+        "/api/chat",
+        json={"message": "xin chào", "conversation_id": conversation_id, "agent_mode": False},
+        headers=headers,
+    )
+
+    assert seen["messages"] == [{"role": "user", "content": "xin chào"}]
+
+
+def test_partial_answer_saved_when_client_disconnects(client):
+    """Bấm 'Dừng' giữa chừng: câu hỏi và phần đã trả lời không được mất.
+
+    Không dựa vào `finally` (Starlette bỏ rơi sync generator khi client ngắt),
+    mà dựa vào việc ghi dần xuống DB trong lúc stream.
+    """
+    many_chunks = [text_chunk(f"tu{index} ") for index in range(200)]
+    install_fake_chat_service([many_chunks])
+    token = register(client)["token"]
+    headers = auth_header(token)
+    conversation_id = client.post("/api/conversations", headers=headers).json()["id"]
+
+    with client.stream(
+        "POST",
+        "/api/chat",
+        json={"message": "xin chào", "conversation_id": conversation_id, "agent_mode": False},
+        headers=headers,
+    ) as response:
+        assert response.status_code == 200
+        lines = response.iter_lines()
+        for _ in range(6):  # đọc vài sự kiện rồi bỏ đi giữa chừng
+            next(lines)
+
+    detail = client.get(f"/api/conversations/{conversation_id}", headers=headers).json()
+
+    assert detail["messages"][0] == {"role": "user", "content": "xin chào"}
+    # Phần đã nhận được giữ lại (dù chưa đủ 200 từ).
+    assert detail["messages"][1]["role"] == "assistant"
+    assert detail["messages"][1]["content"].startswith("tu0")
+    assert detail["title"] == "xin chào"  # tiêu đề cũng đã đặt
+
+
+def test_title_set_even_if_generation_fails(client):
+    """Model lỗi ngay: câu hỏi vẫn được lưu và chat vẫn có tiêu đề."""
+    import httpx
+    from groq import NotFoundError
+
+    request = httpx.Request("POST", "https://api.groq.com/v1/chat/completions")
+    error = NotFoundError(
+        "khong co model", response=httpx.Response(404, request=request), body=None
+    )
+
+    completions = FakeCompletions([])
+    completions.create = lambda **kwargs: (_ for _ in ()).throw(error)
+    service = ChatService(
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        config=make_config(),
+    )
+    service._sleep = lambda seconds: None
+    api_module.app.state.chat_service = service
+
+    token = register(client)["token"]
+    headers = auth_header(token)
+
+    response = client.post(
+        "/api/chat", json={"message": "câu hỏi hỏng", "agent_mode": False}, headers=headers
+    )
+    events = parse_sse(response.text)
+    conversation_id = events[0][1]["conversation_id"]
+    assert any(event_type == "error" for event_type, _ in events)
+
+    detail = client.get(f"/api/conversations/{conversation_id}", headers=headers).json()
+    assert detail["messages"] == [{"role": "user", "content": "câu hỏi hỏng"}]
+    assert detail["title"] == "câu hỏi hỏng"
+
+
+def test_answer_persisted_exactly_once(client):
+    """persist_answer chạy ở cả nhánh thường lẫn finally -> không được lưu 2 lần."""
+    install_fake_chat_service([[text_chunk("Một lần thôi")]])
+    token = register(client)["token"]
+    headers = auth_header(token)
+
+    response = client.post(
+        "/api/chat", json={"message": "hi", "agent_mode": False}, headers=headers
+    )
+    conversation_id = parse_sse(response.text)[-1][1]["conversation_id"]
+
+    detail = client.get(f"/api/conversations/{conversation_id}", headers=headers).json()
+    assert len(detail["messages"]) == 2  # đúng 1 user + 1 assistant
+
+    summary = client.get("/api/usage", headers=headers).json()
+    assert summary["requests"] == 1  # usage cũng chỉ ghi một lần
 
 
 def test_chat_rejects_foreign_conversation(client):
@@ -369,6 +492,25 @@ def test_upload_rejects_unsupported_extension(client):
         files=[("files", ("virus.exe", b"MZ...", "application/octet-stream"))],
         headers=auth_header(token),
     )
+    assert response.status_code == 400
+
+
+def test_upload_rejects_oversized_file(client):
+    token = register(client)["token"]
+    huge = b"x" * (api_module.MAX_UPLOAD_BYTES + 1024)
+
+    response = upload_file(client, auth_header(token), filename="to.txt", content=huge)
+
+    assert response.status_code == 413
+
+
+def test_upload_rejects_too_many_files(client):
+    token = register(client)["token"]
+    files = [
+        ("files", (f"f{index}.txt", b"noi dung", "text/plain"))
+        for index in range(api_module.MAX_UPLOAD_FILES + 1)
+    ]
+    response = client.post("/api/documents", files=files, headers=auth_header(token))
     assert response.status_code == 400
 
 

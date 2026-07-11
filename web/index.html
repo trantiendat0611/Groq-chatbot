@@ -4,22 +4,44 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Groq Assistant</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
+  <link rel="alternate icon" href="/favicon.svg?v=3">
+  <link rel="mask-icon" href="/favicon.svg?v=3" color="#0a0a0a">
+  <meta name="theme-color" content="#050505">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <!-- Màn hình đăng nhập -->
   <div id="auth-view" class="auth-wrap hidden">
     <div class="auth-card">
-      <h1>Groq Assistant</h1>
-      <p class="auth-sub">Trợ lý AI Agent — đăng nhập để bắt đầu</p>
-      <div id="auth-error" class="auth-error hidden"></div>
-      <form id="auth-form">
+      <div class="auth-brand">
+        <span class="groq-logo groq-logo-lg" aria-label="Groq">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.8 1.4 3.6 13.6H9l-1.3 9 11.3-13.3h-6.4z"></path></svg>
+          <span class="groq-wordmark">groq</span>
+        </span>
+        <span class="brand-divider" aria-hidden="true"></span>
+        <h1>Assistant</h1>
+      </div>
+      <p class="auth-sub" id="auth-sub">Trợ lý AI Agent — đăng nhập để bắt đầu</p>
+
+      <div id="auth-error" class="auth-error hidden" role="alert"></div>
+
+      <form id="auth-form" novalidate>
         <label for="username">Tên đăng nhập</label>
-        <input id="username" type="text" autocomplete="username" required minlength="3" maxlength="32">
+        <input id="username" type="text" autocomplete="username" required minlength="3" maxlength="32" placeholder="vd: tiendat">
+
         <label for="password">Mật khẩu</label>
-        <input id="password" type="password" autocomplete="current-password" required minlength="8">
-        <button type="submit" id="auth-submit">Đăng nhập</button>
+        <div class="password-field">
+          <input id="password" type="password" autocomplete="current-password" required minlength="8" placeholder="••••••••">
+          <button type="button" id="toggle-password" class="password-toggle" aria-label="Hiện mật khẩu" title="Hiện mật khẩu">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+        </div>
+        <p id="password-hint" class="field-hint hidden">Mật khẩu cần ít nhất 8 ký tự.</p>
+
+        <button type="submit" id="auth-submit" class="btn primary auth-submit">Đăng nhập</button>
       </form>
+
       <p class="auth-toggle">
         <span id="auth-toggle-text">Chưa có tài khoản?</span>
         <a href="#" id="auth-toggle-link">Đăng ký</a>
@@ -29,8 +51,16 @@
 
   <!-- Màn hình chính -->
   <div id="main-view" class="layout hidden">
-    <aside class="sidebar">
-      <div class="brand">Groq Assistant</div>
+    <div id="sidebar-backdrop" class="backdrop hidden"></div>
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <span class="groq-logo" aria-label="Groq">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.8 1.4 3.6 13.6H9l-1.3 9 11.3-13.3h-6.4z"></path></svg>
+          <span class="groq-wordmark">groq</span>
+        </span>
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-name">Assistant</span>
+      </div>
 
       <button id="new-chat" class="btn primary">+ Chat mới</button>
 
@@ -74,8 +104,15 @@
 
     <main class="chat-area">
       <header class="chat-header">
-        <div id="chat-title">Trợ lý AI</div>
-        <div id="model-line" class="model-line"></div>
+        <div class="header-row">
+          <button id="menu-btn" class="icon-btn menu-btn" aria-label="Mở menu" title="Mở menu">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
+          </button>
+          <div>
+            <div id="chat-title">Trợ lý AI</div>
+            <div id="model-line" class="model-line"></div>
+          </div>
+        </div>
       </header>
 
       <div id="messages" class="messages">

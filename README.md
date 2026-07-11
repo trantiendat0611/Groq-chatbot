@@ -51,10 +51,11 @@ Groq-chatbot/
 |   |-- vector_store.py     # Kho tri thức bền vững: chunks + embedding trong SQLite
 |   |-- user_memory.py      # Trí nhớ dài hạn về người dùng, xuyên các cuộc chat
 |   |-- memory.py           # Lưu và đọc lịch sử chat bằng SQLite
+|   |-- db.py               # Kết nối SQLite dùng chung (bật WAL, busy_timeout)
 |   |-- auth.py             # Tài khoản + phiên đăng nhập (PBKDF2, token băm)
 |   |-- usage.py            # Theo dõi mức sử dụng token
 |   `-- rag.py              # Đọc tài liệu, chunk và retrieve context
-|-- tests/                  # Bộ test pytest (130 test)
+|-- tests/                  # Bộ test pytest (155 test)
 |-- data/
 |   |-- chats.db            # Lịch sử chat + tài khoản + usage (tự tạo)
 |   `-- knowledge.db        # Kho tri thức + trí nhớ dài hạn (tự tạo)
@@ -251,15 +252,20 @@ Bộ test (130 test) bao phủ: backend API và cô lập đa người dùng (`a
 - So sánh mật khẩu bằng `hmac.compare_digest` chống timing attack
 - Dữ liệu (hội thoại, tài liệu, trí nhớ, usage) cô lập tuyệt đối theo user — kiểm tra quyền sở hữu ở mọi endpoint
 - Rate limiting: 20 lượt chat/phút/user, 10 lượt đăng nhập/phút/IP, 6 lượt upload/phút/user
-- Giới hạn upload 10MB/file, chỉ nhận `.txt`, `.md`, `.pdf`
-- Máy tính của agent duyệt AST, không `eval()` — không thể chạy code tùy ý
+- Upload: tối đa 10 file/lần, 10MB/file, đọc theo khối và dừng ngay khi vượt hạn mức (không nạp trọn file vào RAM)
+- Máy tính của agent duyệt AST, không `eval()` — chặn cả biểu thức "bom" kiểu `9**9**9` làm treo CPU
+- Render markdown escape HTML trước, chặn `javascript:` — an toàn XSS
 - Prompt chống injection: kết quả công cụ/tài liệu là dữ liệu, không phải mệnh lệnh
 - SQL tham số hóa toàn bộ, chống SQL injection
+- Container Docker chạy bằng user thường, không phải root
 
 ## Tính năng hiện có
 
 - **Kiến trúc client/server**: backend FastAPI (REST + SSE) + giao diện web riêng, Streamlit và CLI dùng chung lõi `src/`
 - **Đăng nhập đa người dùng**: mỗi người có lịch sử chat, tài liệu, trí nhớ, thống kê token riêng
+- **Nút Dừng tạo**: ngắt giữa chừng, phần đã trả lời vẫn được lưu (ghi dần xuống DB trong lúc stream)
+- **Giao diện responsive**: trên điện thoại sidebar thành ngăn kéo trượt, mở bằng nút menu
+- **Markdown đầy đủ**: bảng (cuộn ngang), danh sách đánh số, code block, liên kết an toàn
 - **Chế độ Agent**: AI tự quyết định gọi công cụ nhiều bước (máy tính, web search, tra tài liệu, ghi nhớ), hiển thị tiến trình từng bước
 - **Trí nhớ dài hạn** xuyên các cuộc chat, tự ghi nhớ và nhớ lại (giống Memory của ChatGPT/Claude)
 - **RAG ngữ nghĩa**: embedding đa ngôn ngữ + vector store bền vững trong SQLite, fallback từ khóa

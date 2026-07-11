@@ -75,6 +75,31 @@ def execute_tool(tools: list[Tool], name: str, arguments_json: str) -> str:
 # Tuyệt đối không dùng eval() — eval cho phép chạy code tùy ý.
 # ---------------------------------------------------------------------------
 
+# Chặn DoS: `9**9**9` sẽ treo CPU vô hạn nếu tính thẳng.
+# Giới hạn để mọi biểu thức hợp lệ vẫn chạy, còn biểu thức "bom" bị từ chối ngay.
+MAX_POW_EXPONENT = 1000
+MAX_RESULT_DIGITS = 5000
+MAX_AST_NODES = 200
+
+
+def _guarded_pow(base: float, exponent: float) -> float:
+    if abs(exponent) > MAX_POW_EXPONENT:
+        raise ValueError(
+            f"Số mũ quá lớn (tối đa {MAX_POW_EXPONENT}). Hãy dùng biểu thức nhỏ hơn."
+        )
+
+    # Ước lượng số chữ số của kết quả TRƯỚC khi tính, tránh treo CPU.
+    if base != 0:
+        estimated_digits = abs(exponent) * math.log10(abs(base))
+        if estimated_digits > MAX_RESULT_DIGITS:
+            raise ValueError(
+                f"Kết quả quá lớn (khoảng {int(estimated_digits)} chữ số, "
+                f"tối đa {MAX_RESULT_DIGITS})."
+            )
+
+    return operator.pow(base, exponent)
+
+
 _BINARY_OPS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -82,7 +107,7 @@ _BINARY_OPS = {
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+    ast.Pow: _guarded_pow,
 }
 
 _UNARY_OPS = {
@@ -151,6 +176,11 @@ def safe_calculate(expression: str) -> str:
         tree = ast.parse(expression.strip(), mode="eval")
     except SyntaxError as exc:
         raise ValueError(f"Biểu thức không hợp lệ: {exc}") from exc
+
+    # Biểu thức lồng quá sâu cũng là một dạng tấn công làm cạn tài nguyên.
+    node_count = sum(1 for _ in ast.walk(tree))
+    if node_count > MAX_AST_NODES:
+        raise ValueError("Biểu thức quá phức tạp.")
 
     result = _evaluate_node(tree)
 

@@ -15,6 +15,11 @@ COPY api.py chatbot.py ./
 ENV FASTEMBED_CACHE_PATH=/app/model-cache
 RUN mkdir -p /app/data /app/model-cache
 
+# Không chạy bằng root: nếu app bị chiếm quyền, thiệt hại bị giới hạn.
+RUN useradd --create-home --uid 1000 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 # Healthcheck để orchestrator biết app còn sống.

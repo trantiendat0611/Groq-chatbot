@@ -9,7 +9,7 @@ Luồng một lượt trả lời:
        chốt câu trả lời, tránh lặp vô hạn.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from groq import APIError
 

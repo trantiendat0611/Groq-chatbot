@@ -2,6 +2,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from src import db
 from src.config import PROJECT_ROOT
 
 
@@ -18,12 +19,7 @@ class Conversation:
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     # Đọc DB_PATH lúc gọi (không phải lúc định nghĩa) để test thay được đường dẫn.
-    db_path = db_path or DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    return db.connect(db_path or DB_PATH, foreign_keys=True)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
@@ -181,6 +177,19 @@ def add_chat_message(conversation_id: int, role: str, content: str) -> int:
             (conversation_id,),
         )
         return int(cursor.lastrowid)
+
+
+def update_chat_message(message_id: int, content: str) -> None:
+    """Cập nhật nội dung một message đã lưu.
+
+    Dùng để ghi dần câu trả lời trong lúc stream: nếu người dùng bấm "Dừng"
+    hoặc mất kết nối, phần đã nhận vẫn nằm trong database.
+    """
+    with _connect() as connection:
+        connection.execute(
+            "UPDATE messages SET content = ? WHERE id = ?",
+            (content, message_id),
+        )
 
 
 def rename_chat(conversation_id: int, title: str, user_id: int | None = None) -> None:

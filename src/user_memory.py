@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src import db
 from src.config import PROJECT_ROOT
 
 
@@ -30,11 +31,7 @@ class UserMemory:
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
-    db_path = db_path or DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return db.connect(db_path or DB_PATH)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, ddl: str) -> None:

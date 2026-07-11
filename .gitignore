@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest-tmp/
+# Database và file phụ của SQLite WAL (chứa dữ liệu sống, không được commit)
 data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
 !data/.gitkeep
 .claude/settings.local.json

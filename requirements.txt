@@ -1,10 +1,25 @@
-groq
-python-dotenv
-fastapi
-uvicorn[standard]
-streamlit
-requests
-pypdf
-pytest
-fastembed
-ddgs
+# Ghim phiên bản để mọi máy/CI/Docker cài ra cùng một môi trường.
+
+# Lõi
+groq==1.5.0
+python-dotenv==1.2.2
+numpy==2.5.0
+
+# Backend API + giao diện web
+fastapi==0.138.0
+uvicorn[standard]==0.49.0
+python-multipart==0.0.32
+
+# Giao diện Streamlit (bản local)
+streamlit==1.58.0
+
+# RAG: đọc PDF + embedding đa ngôn ngữ
+pypdf==6.14.2
+fastembed==0.8.0
+
+# Công cụ của agent
+ddgs==9.14.4
+requests==2.34.2
+
+# Test
+pytest==9.1.1

@@ -47,6 +47,32 @@ def test_calculator_invalid_syntax():
         safe_calculate("2 +")
 
 
+# --- Chống DoS: biểu thức "bom" phải bị chặn NGAY, không treo CPU ---
+
+
+@pytest.mark.parametrize(
+    "bomb",
+    ["9**9**9", "10**10**10", "2**999999", "(2)**99999"],
+)
+def test_calculator_rejects_exponent_bombs_quickly(bomb):
+    import time
+
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="quá lớn"):
+        safe_calculate(bomb)
+    # Nếu tính thật thì sẽ treo hàng phút; chặn phải gần như tức thì.
+    assert time.monotonic() - started < 1.0
+
+
+def test_calculator_still_allows_reasonable_powers():
+    assert safe_calculate("2**1000").startswith("107150860718626732")
+
+
+def test_calculator_rejects_overly_complex_expression():
+    with pytest.raises(ValueError, match="quá phức tạp"):
+        safe_calculate("+".join(["1"] * 300))
+
+
 # --- Khung tool ---
 
 

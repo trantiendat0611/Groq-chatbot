@@ -42,6 +42,14 @@ logger = logging.getLogger("groq_assistant.api")
 
 WEB_DIR = PROJECT_ROOT / "web"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB mỗi file
+MAX_UPLOAD_FILES = 10
+UPLOAD_CHUNK_BYTES = 256 * 1024
+
+# Ghi câu trả lời đang stream xuống DB: theo thời gian HOẶC theo số ký tự mới.
+# Groq trả lời rất nhanh, nếu chỉ chặn theo thời gian thì cả câu có thể chảy
+# xong trong một nhịp và phần lớn nội dung sẽ mất khi người dùng bấm "Dừng".
+ANSWER_FLUSH_SECONDS = 0.4
+ANSWER_FLUSH_CHARS = 200
 
 RATE_LIMIT_CHAT_PER_MINUTE = 20
 RATE_LIMIT_AUTH_PER_MINUTE = 10
@@ -62,9 +70,32 @@ TOOL_LABELS = {
 
 _rate_buckets: dict[str, deque] = defaultdict(deque)
 
+# Dọn định kỳ các khóa đã hết hạn: khóa theo IP đến từ Internet là vô hạn,
+# nếu giữ mãi thì dict phình to không giới hạn (rò rỉ bộ nhớ).
+RATE_BUCKET_SWEEP_EVERY = 500
+_rate_calls_since_sweep = 0
+
+
+def _sweep_rate_buckets(now: float, window_seconds: float) -> None:
+    stale = [
+        key
+        for key, bucket in _rate_buckets.items()
+        if not bucket or bucket[-1] <= now - window_seconds
+    ]
+    for key in stale:
+        del _rate_buckets[key]
+
 
 def check_rate_limit(key: str, limit: int, window_seconds: float = 60.0) -> None:
+    global _rate_calls_since_sweep
+
     now = time.monotonic()
+
+    _rate_calls_since_sweep += 1
+    if _rate_calls_since_sweep >= RATE_BUCKET_SWEEP_EVERY:
+        _rate_calls_since_sweep = 0
+        _sweep_rate_buckets(now, window_seconds)
+
     bucket = _rate_buckets[key]
     while bucket and bucket[0] <= now - window_seconds:
         bucket.popleft()
@@ -205,6 +236,30 @@ def resolve_settings(chat_service: ChatService, body: ChatRequest) -> Generation
         temperature=body.temperature if body.temperature is not None else defaults.temperature,
         max_tokens=body.max_tokens if body.max_tokens is not None else defaults.max_tokens,
     )
+
+
+async def _read_capped(file: UploadFile, filename: str) -> bytes:
+    """Đọc file theo từng khối, dừng ngay khi vượt hạn mức.
+
+    Đọc thẳng `await file.read()` sẽ nạp trọn file vào RAM rồi mới kiểm tra
+    dung lượng — một file khổng lồ có thể làm cạn bộ nhớ server trước đó.
+    """
+    chunks: list[bytes] = []
+    total = 0
+
+    while True:
+        chunk = await file.read(UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{filename}' vượt quá giới hạn 10MB.",
+            )
+        chunks.append(chunk)
+
+    return b"".join(chunks)
 
 
 def build_user_tools(
@@ -414,11 +469,58 @@ def chat(
         prompt_tokens = 0
         completion_tokens = 0
         got_real_usage = False
+        assistant_message_id: int | None = None
+        last_flush = 0.0
+        last_flush_length = 0
+
+        def flush_answer(force: bool = False) -> None:
+            """Ghi phần câu trả lời đã nhận xuống database.
+
+            Không thể dựa vào khối `finally`: khi client ngắt kết nối, Starlette
+            bỏ rơi generator đồng bộ mà không đóng nó một cách xác định, nên
+            `finally` có thể không bao giờ chạy. Vì vậy ta ghi dần trong lúc
+            stream — bấm "Dừng" hay rớt mạng đều không mất phần đã trả lời.
+            """
+            nonlocal assistant_message_id, last_flush, last_flush_length
+
+            text = "".join(answer_parts)
+            if not text.strip():
+                return
+
+            now = time.monotonic()
+            if assistant_message_id is None:
+                # Ghi ngay từ mẩu chữ đầu tiên để không bao giờ mất trắng.
+                assistant_message_id = memory.add_chat_message(
+                    conversation_id, "assistant", text
+                )
+            elif (
+                force
+                or now - last_flush >= ANSWER_FLUSH_SECONDS
+                or len(text) - last_flush_length >= ANSWER_FLUSH_CHARS
+            ):
+                memory.update_chat_message(assistant_message_id, text)
+            else:
+                return
+
+            last_flush = now
+            last_flush_length = len(text)
+
+        # Báo conversation_id ngay từ đầu: nếu người dùng bấm "Dừng" giữa chừng,
+        # client vẫn biết lượt chat này thuộc hội thoại nào (không tạo chat mồ côi).
+        yield sse_event("start", {"conversation_id": conversation_id})
+
+        # Lưu câu hỏi trước khi gọi model: câu hỏi của người dùng không bao giờ mất.
+        memory.add_chat_message(conversation_id, "user", message)
+        title = memory.get_chat_title(conversation_id, user_id=user.id)
+        if title == "Chat mới":
+            title = make_title(message)
+            memory.rename_chat(conversation_id, title, user_id=user.id)
 
         try:
             for event in agent_service.run_stream(messages_for_llm, system_prompt, settings):
                 if event.type == "text":
                     answer_parts.append(event.content)
+                    flush_answer()
                     yield sse_event("text", {"content": event.content})
                 elif event.type == "tool_call":
                     yield sse_event(
@@ -443,32 +545,32 @@ def chat(
                     prompt_tokens += event.prompt_tokens
                     completion_tokens += event.completion_tokens
         except ChatServiceError as exc:
+            flush_answer(force=True)
             yield sse_event("error", {"message": str(exc)})
             return
         except Exception:
             logger.exception("Lỗi không mong đợi trong lượt chat.")
+            flush_answer(force=True)
             yield sse_event(
                 "error", {"message": "Có lỗi không mong đợi. Hãy thử lại."}
             )
             return
 
+        flush_answer(force=True)
+        if assistant_message_id is None:
+            memory.add_chat_message(
+                conversation_id,
+                "assistant",
+                "(Không nhận được nội dung trả lời. Hãy thử lại.)",
+            )
+
         answer = "".join(answer_parts).strip()
-        if not answer:
-            answer = "(Không nhận được nội dung trả lời. Hãy thử lại.)"
-
-        title = memory.get_chat_title(conversation_id, user_id=user.id)
-        if title == "Chat mới":
-            title = make_title(message)
-            memory.rename_chat(conversation_id, title, user_id=user.id)
-
-        memory.add_chat_message(conversation_id, "user", message)
-        memory.add_chat_message(conversation_id, "assistant", answer)
-
         if not got_real_usage:
             prompt_tokens = sum(
                 estimate_tokens(item.get("content", "")) for item in messages_for_llm
             ) + estimate_tokens(system_prompt)
             completion_tokens = estimate_tokens(answer)
+
         usage.record_usage(
             model=settings.model,
             prompt_tokens=prompt_tokens,
@@ -534,6 +636,12 @@ async def upload_documents(
     else:
         _require_owned_conversation(conversation_id, user)
 
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chỉ nhận tối đa {MAX_UPLOAD_FILES} file mỗi lần.",
+        )
+
     payload: list[tuple[str, bytes]] = []
     for file in files:
         filename = file.filename or "khong_ten"
@@ -542,13 +650,7 @@ async def upload_documents(
                 status_code=400,
                 detail=f"File '{filename}' không được hỗ trợ (chỉ nhận .txt, .md, .pdf).",
             )
-        data = await file.read()
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File '{filename}' vượt quá giới hạn 10MB.",
-            )
-        payload.append((filename, data))
+        payload.append((filename, await _read_capped(file, filename)))
 
     chunks = build_chunks(payload)
     if not chunks:

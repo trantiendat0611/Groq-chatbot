@@ -50,6 +50,16 @@ def test_add_message_rejects_invalid_role():
         memory.add_chat_message(conversation_id, "system", "không được phép")
 
 
+def test_update_chat_message():
+    conversation_id = memory.create_chat()
+    message_id = memory.add_chat_message(conversation_id, "assistant", "Xin")
+
+    memory.update_chat_message(message_id, "Xin chào bạn")
+
+    messages = memory.get_chat_messages(conversation_id)
+    assert messages == [{"role": "assistant", "content": "Xin chào bạn"}]
+
+
 def test_rename_chat():
     conversation_id = memory.create_chat("Tên cũ")
     memory.rename_chat(conversation_id, "Tên mới")

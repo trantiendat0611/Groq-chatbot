@@ -35,7 +35,7 @@ from src.tools import (
 
 st.set_page_config(
     page_title="Groq Assistant",
-    page_icon=None,
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
